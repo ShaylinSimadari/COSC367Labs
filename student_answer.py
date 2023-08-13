@@ -1,30 +1,42 @@
 import collections
+import itertools
+import math
+from heapq import heappush, heappop
 
 from search import *
 import copy
 
 
 def strpath(arcs):
-    return "".join([arc.head for arc in arcs])
+    path = "".join([arc.head if arc.head else "#" for arc in arcs])
+    return path
+
+
+def strpathc(arcs):
+    cost = sum([arc.cost if arc.cost else 0 for arc in arcs])
+    return f"{strpath(arcs)},{cost}"
+
+
+def strpathh(arcs, f):
+    return f"{strpath(arcs)},{f}"
 
 
 class FSFrontier(Frontier):
 
-    def __init__(self):
-        self.dq = collections.deque()
-
+    @abstractmethod
     def add(self, path):
-        self.dq.append(path)
-        print(f"+{strpath(path)}")
+        """Adds a new path to the frontier. A path is a sequence (tuple) of
+        Arc objects. You should override this method.
+
+        """
 
     def __iter__(self):
         return self
 
     def __next__(self):
-        if len(self.dq) == 0:
+        if len(self.ct) == 0:
             raise StopIteration
         x = self.pop()
-        print(f"-{strpath(x)}")
         return x
 
     @abstractmethod
@@ -37,13 +49,134 @@ class FSFrontier(Frontier):
 
 
 class DFSFrontier(FSFrontier):
+    def __init__(self):
+        self.ct = collections.deque()
+
+    def add(self, path):
+        self.ct.append(path)
+        print(f"+{strpath(path)}")
+
     def pop(self):
-        return self.dq.pop()
+        x = self.ct.pop()
+        print(f"-{strpath(x)}")
+        return x
 
 
 class BFSFrontier(FSFrontier):
+    def __init__(self):
+        self.ct = collections.deque()
+
+    def add(self, path):
+        self.ct.append(path)
+        print(f"+{strpath(path)}")
+
     def pop(self):
-        return self.dq.popleft()
+        x = self.ct.popleft()
+        print(f"-{strpath(x)}")
+        return x
+
+
+def cost(path):
+    """simple sum of arc costs"""
+    return sum(arc.cost for arc in path)
+
+
+class LCFSFrontier(FSFrontier):
+    def __init__(self):
+        self.ct = []
+        self.i = itertools.count()
+
+    def add(self, path):
+        heappush(self.ct, (cost(path), next(self.i), path))
+        # print(f"+{strpathc(path)}")
+
+    def pop(self):
+        cost, i, path = heappop(self.ct)
+        # print(f"-{strpathc(path)}")
+        return path
+
+
+def h(node):
+    """put your hueristic function here"""
+    estimates={'A': 6, 'B': 3, 'C': 2, 'D': 1, 'G': 0}
+    return estimates[node]
+
+
+def f(path):
+    return cost(path) + h(end_node(path))
+
+
+class AStarFrontier(FSFrontier):
+    def __init__(self):
+        self.ct = []
+        self.i = itertools.count()
+
+    def add(self, path):
+        heappush(self.ct, (f(path), next(self.i), path))
+        print(f"+{strpathh(path, f(path))}")
+
+    def pop(self):
+        cost, i, path = heappop(self.ct)
+        print(f"-{strpathh(path, cost)}")
+        return path
+
+
+def end_node(path):
+    return path[-1].head
+
+
+class LCFSFrontierWithPruning(FSFrontier):
+
+    def __init__(self):
+        self.ct = []
+        self.i = itertools.count()
+        self.considered = set()
+
+    def add(self, path):
+        if end_node(path) in self.considered:
+            print(f"+{strpathc(path)}!")
+            return
+        cost = sum([arc.cost for arc in path])
+        heappush(self.ct, (cost, next(self.i), path))
+        print(f"+{strpathc(path)}")
+
+    def pop(self):
+        flag = True
+        while flag:
+            cost, i, path = heappop(self.ct)
+            flag = end_node(path) in self.considered
+            if flag:
+                print(f"-{strpathc(path)}!")
+
+        self.considered.add(end_node(path))
+        print(f"-{strpathc(path)}")
+        return path
+
+
+class AStarFrontierWithPruning(FSFrontier):
+    def __init__(self):
+        self.ct = []
+        self.i = itertools.count()
+        self.considered = set()
+
+    def add(self, path):
+        if end_node(path) in self.considered:
+            print(f"+{strpathh(path, f(path))}!")
+            return
+        heappush(self.ct, (f(path), next(self.i), path))
+        print(f"+{strpathh(path, f(path))}")
+
+    def pop(self):
+        flag = True
+        while flag:
+            cost, i, path = heappop(self.ct)
+            flag = end_node(path) in self.considered
+            if flag:
+                print(f"-{strpathh(path, cost)}!")
+
+        self.considered.add(end_node(path))
+        print(f"-{strpathh(path, cost)}")
+        return path
 
 
 class FunkyNumericGraph(Graph):
@@ -107,3 +240,39 @@ class SlidingPuzzleGraph(Graph):
     def is_goal(self, state):
         flat = [0 if item == BLANK else item for sublist in state for item in sublist]
         return state[0][0] == BLANK and sorted(flat) == flat
+
+
+def action_str(tail, head):
+    return f"{tail}->{head}"
+
+
+def euc_dist(pt1, pt2):
+    return math.sqrt((pt1[0]-pt2[0])**2 + (pt1[1]-pt2[1])**2)
+
+
+class LocationGraph(Graph):
+    def __init__(self, location, radius, starting_nodes, goal_nodes):
+        self.location = location
+        self.radius = radius
+        self._starting_nodes = starting_nodes
+        self.goal_nodes = goal_nodes
+
+    def starting_nodes(self):
+        return self._starting_nodes
+
+    def is_goal(self, node):
+        return node in self.goal_nodes
+
+    def outgoing_arcs(self, tail):
+        arcs = []
+        t_pt = self.location[tail]
+        for head, h_pt in self.location.items():
+            if head == tail:
+                continue
+            dist = euc_dist(t_pt, h_pt)
+            if dist > self.radius:
+                continue
+            arcs.append(Arc(tail, head, action_str(tail, head), dist))
+
+        arcs.sort(key=lambda arc: arc.head)
+        return arcs
